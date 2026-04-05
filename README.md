@@ -22,6 +22,7 @@ engine
 - **Read path** — `get` searches memtables newest-first
 - **Scan** — sorted range iteration via k-way merge iterator over all memtables
 - **Block** — compact binary encoding for on-disk key-value storage, 4KB aligned
+- **Block iterator** — seek-based access with `seek_first` and `seek_key` (first key >= target)
 
 ## Building
 
@@ -33,6 +34,7 @@ make memtable   # run memtable tests only
 make engine     # run engine tests only
 make lsm_iter   # run iterator tests only
 make block      # run block tests only
+make block_iter # run block iterator tests only
 ```
 
 ## Usage
@@ -71,7 +73,7 @@ engine_close(&e);
 - [x] Engine (put / get / delete / scan)
 - [x] Freeze memtable
 - [x] Block (on-disk storage unit)
-- [ ] Block iterator
+- [x] Block iterator
 - [ ] SSTable (flush to disk)
 - [ ] Bloom filter (skip SSTables that cannot contain a key)
 - [ ] Compaction
