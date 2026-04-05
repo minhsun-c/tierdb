@@ -1,2 +1,79 @@
 # tierdb
-A lightweight LSM-tree key-value storage engine
+
+A lightweight LSM-tree key-value storage engine written in C.
+
+## Overview
+
+tierdb is a from-scratch implementation of an LSM-tree (Log-Structured Merge-tree) storage engine, inspired by [mini-lsm](https://github.com/skyzh/mini-lsm). It is built as a learning project to understand the internals of modern key-value stores like LevelDB and RocksDB.
+
+## Architecture
+
+```
+engine
+├── memtable          — mutable in-memory write buffer (skiplist)
+├── imm_memtables[]   — frozen immutable memtables, awaiting flush
+└── sstables[]        — on-disk sorted string tables (coming soon)
+```
+
+## Features
+
+- **Skiplist-based memtable** — intrusive linked node design inspired by Linux `list_head`
+- **Write path** — `put`, `delete` (tombstone), automatic freeze on size threshold
+- **Read path** — `get` searches memtables newest-first
+- **Scan** — sorted range iteration via k-way merge iterator over all memtables
+
+## Building
+
+```bash
+make        # build all
+make test   # run all tests
+make skiplist   # run skiplist tests only
+make memtable   # run memtable tests only
+make engine     # run engine tests only
+make lsm_iter   # run iterator tests only
+```
+
+## Usage
+
+```c
+struct engine e;
+struct engine_options opts = {
+    .threshold = 64 * 1024 * 1024, /* 64 MB */
+    .imm_cap = 4,
+    .max_level = 16,
+};
+engine_open(&e, &opts);
+
+engine_put(&e, (uint8_t *) "hello", 5, (uint8_t *) "world", 5);
+
+struct memtable_entry *entry = engine_get(&e, (uint8_t *) "hello", 5);
+if (entry && entry->value_len > 0)
+    printf("%.*s\n", (int) entry->value_len, entry->value);
+
+/* range scan */
+struct lsm_iter iter;
+engine_scan(&e, NULL, 0, NULL, 0, &iter);
+while (lsm_iter_is_valid(&iter)) {
+    printf("%.*s\n", (int) lsm_iter_key_len(&iter), lsm_iter_key(&iter));
+    lsm_iter_next(&iter);
+}
+lsm_iter_destroy(&iter);
+
+engine_close(&e);
+```
+
+## Roadmap
+
+- [x] Skiplist
+- [x] Memtable
+- [x] Engine (put / get / delete / scan)
+- [x] Freeze memtable
+- [ ] SSTable (flush to disk)
+- [ ] Bloom filter (skip SSTables that cannot contain a key)
+- [ ] Compaction
+- [ ] WAL (crash recovery)
+- [ ] Block cache
+
+## References
+
+- [mini-lsm](https://github.com/skyzh/mini-lsm) by Alex Chi Z
