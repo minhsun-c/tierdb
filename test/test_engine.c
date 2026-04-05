@@ -2,6 +2,7 @@
 #include <string.h>
 #include "checker.h"
 #include "engine.h"
+#include "lsm_iter.h"
 #include "memtable.h"
 #include "util.h"
 
@@ -29,7 +30,7 @@ static const uint8_t *v(const char *s)
 
 /*
  * ========================================
- * tests
+ * tests - basic operations
  * ========================================
  */
 static void test_open_close(void)
@@ -109,6 +110,11 @@ static void test_delete(void)
     engine_close(&e);
 }
 
+/*
+ * ========================================
+ * tests - freeze
+ * ========================================
+ */
 static void test_freeze(void)
 {
     printf(COLOR_BLUE "\n--- Freeze ---\n" COLOR_RESET);
@@ -233,6 +239,124 @@ static void test_freeze_full(void)
 
 /*
  * ========================================
+ * tests - iterators
+ * ========================================
+ */
+static void test_scan_basic(void)
+{
+    printf(COLOR_BLUE "\n--- Scan Basic ---\n" COLOR_RESET);
+    struct engine e;
+    struct engine_options opts = default_opts();
+    engine_open(&e, &opts);
+
+    engine_put(&e, k("apple"), 5, v("1"), 1);
+    engine_put(&e, k("banana"), 6, v("2"), 1);
+    engine_put(&e, k("cherry"), 6, v("3"), 1);
+    engine_put(&e, k("mango"), 5, v("4"), 1);
+
+    struct lsm_iter iter;
+    engine_scan(&e, NULL, 0, NULL, 0, &iter);
+
+    const char *expected[] = {"apple", "banana", "cherry", "mango"};
+    int i = 0;
+    while (lsm_iter_is_valid(&iter)) {
+        EXPECT_STR_EQ((char *) lsm_iter_key(&iter), expected[i], expected[i]);
+        i++;
+        lsm_iter_next(&iter);
+    }
+    EXPECT_EQ(i, 4, "scanned 4 entries");
+
+    lsm_iter_destroy(&iter);
+    engine_close(&e);
+}
+
+static void test_scan_with_bounds(void)
+{
+    printf(COLOR_BLUE "\n--- Scan With Bounds ---\n" COLOR_RESET);
+    struct engine e;
+    struct engine_options opts = default_opts();
+    engine_open(&e, &opts);
+
+    engine_put(&e, k("apple"), 5, v("1"), 1);
+    engine_put(&e, k("banana"), 6, v("2"), 1);
+    engine_put(&e, k("cherry"), 6, v("3"), 1);
+    engine_put(&e, k("mango"), 5, v("4"), 1);
+
+    struct lsm_iter iter;
+    engine_scan(&e, k("banana"), 6, k("cherry"), 6, &iter);
+
+    const char *expected[] = {"banana", "cherry"};
+    int i = 0;
+    while (lsm_iter_is_valid(&iter)) {
+        EXPECT_STR_EQ((char *) lsm_iter_key(&iter), expected[i], expected[i]);
+        i++;
+        lsm_iter_next(&iter);
+    }
+    EXPECT_EQ(i, 2, "scanned 2 entries within bounds");
+
+    lsm_iter_destroy(&iter);
+    engine_close(&e);
+}
+
+static void test_scan_across_freeze(void)
+{
+    printf(COLOR_BLUE "\n--- Scan Across Freeze ---\n" COLOR_RESET);
+    struct engine e;
+    struct engine_options opts = default_opts();
+    engine_open(&e, &opts);
+
+    engine_put(&e, k("apple"), 5, v("1"), 1);
+    engine_put(&e, k("cherry"), 6, v("3"), 1);
+    engine_freeze_memtable(&e);
+    engine_put(&e, k("banana"), 6, v("2"), 1);
+    engine_put(&e, k("mango"), 5, v("4"), 1);
+
+    struct lsm_iter iter;
+    engine_scan(&e, NULL, 0, NULL, 0, &iter);
+
+    const char *expected[] = {"apple", "banana", "cherry", "mango"};
+    int i = 0;
+    while (lsm_iter_is_valid(&iter)) {
+        EXPECT_STR_EQ((char *) lsm_iter_key(&iter), expected[i], expected[i]);
+        i++;
+        lsm_iter_next(&iter);
+    }
+    EXPECT_EQ(i, 4, "scanned 4 entries across freeze");
+
+    lsm_iter_destroy(&iter);
+    engine_close(&e);
+}
+
+static void test_scan_skip_tombstone(void)
+{
+    printf(COLOR_BLUE "\n--- Scan Skip Tombstone ---\n" COLOR_RESET);
+    struct engine e;
+    struct engine_options opts = default_opts();
+    engine_open(&e, &opts);
+
+    engine_put(&e, k("apple"), 5, v("1"), 1);
+    engine_put(&e, k("banana"), 6, v("2"), 1);
+    engine_delete(&e, k("banana"), 6);
+    engine_put(&e, k("cherry"), 6, v("3"), 1);
+
+    struct lsm_iter iter;
+    engine_scan(&e, NULL, 0, NULL, 0, &iter);
+
+    const char *expected[] = {"apple", "cherry"};
+    int i = 0;
+    while (lsm_iter_is_valid(&iter)) {
+        EXPECT_STR_EQ((char *) lsm_iter_key(&iter), expected[i], expected[i]);
+        i++;
+        lsm_iter_next(&iter);
+    }
+    EXPECT_EQ(i, 2, "tombstone skipped in scan");
+
+    lsm_iter_destroy(&iter);
+    engine_close(&e);
+}
+
+/*
+ * ========================================
  * main
  * ========================================
  */
@@ -250,6 +374,10 @@ int main(void)
     test_delete_across_freeze();
     test_auto_freeze();
     test_freeze_full();
+    test_scan_basic();
+    test_scan_with_bounds();
+    test_scan_across_freeze();
+    test_scan_skip_tombstone();
 
     TEST_SUMMARY();
 }

@@ -3,6 +3,7 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+#include "lsm_iter.h"
 #include "memtable.h"
 
 int engine_open(struct engine *e, struct engine_options *opts)
@@ -77,6 +78,30 @@ struct memtable_entry *engine_get(struct engine *e,
 int engine_delete(struct engine *e, const uint8_t *key, size_t key_len)
 {
     return engine_put(e, key, key_len, NULL, 0);
+}
+
+int engine_scan(struct engine *e,
+                const uint8_t *lower,
+                size_t lower_len,
+                const uint8_t *upper,
+                size_t upper_len,
+                struct lsm_iter *iter)
+{
+    if (!e || !iter)
+        return -1;
+
+    struct memtable **src =
+        malloc(sizeof(struct memtable *) * (1 + e->imm_count));
+    if (!src)
+        return -1;
+
+    src[0] = e->memtable;
+    for (uint32_t i = 1; i <= e->imm_count; i++)
+        src[i] = e->imm_memtables[e->imm_count - i];
+    int ret = lsm_iter_init(iter, src, e->imm_count + 1, lower, lower_len,
+                            upper, upper_len);
+    free(src);
+    return ret;
 }
 
 int engine_freeze_memtable(struct engine *e)

@@ -4,6 +4,7 @@
 #include <stdint.h>
 
 struct memtable;
+struct lsm_iter;
 
 /**
  * struct engine_options - configuration passed to engine_open
@@ -105,6 +106,28 @@ struct memtable_entry *engine_get(struct engine *e,
  * @return:  0 on success, -1 on failure
  */
 int engine_delete(struct engine *e, const uint8_t *key, size_t key_len);
+
+/**
+ * engine_scan - create a sorted iterator over a key range
+ *
+ * Builds a source array from the mutable and all immutable memtables
+ * (newest first) and initializes an lsm_iter over them. The caller
+ * must call lsm_iter_destroy() when done.
+ *
+ * @e:         target engine
+ * @lower:     inclusive lower bound key; NULL means unbounded
+ * @lower_len: length of lower bound key in bytes
+ * @upper:     inclusive upper bound key; NULL means unbounded
+ * @upper_len: length of upper bound key in bytes
+ * @iter:      iterator to initialize
+ * @return:    0 on success, -1 on allocation failure
+ */
+int engine_scan(struct engine *e,
+                const uint8_t *lower,
+                size_t lower_len,
+                const uint8_t *upper,
+                size_t upper_len,
+                struct lsm_iter *iter);
 
 /**
  * engine_freeze_memtable - freeze the current mutable memtable
