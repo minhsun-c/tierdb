@@ -21,6 +21,7 @@ engine
 - **Write path** — `put`, `delete` (tombstone), automatic freeze on size threshold
 - **Read path** — `get` searches memtables newest-first
 - **Scan** — sorted range iteration via k-way merge iterator over all memtables
+- **Block** — compact binary encoding for on-disk key-value storage, 4KB aligned
 
 ## Building
 
@@ -31,6 +32,7 @@ make skiplist   # run skiplist tests only
 make memtable   # run memtable tests only
 make engine     # run engine tests only
 make lsm_iter   # run iterator tests only
+make block      # run block tests only
 ```
 
 ## Usage
@@ -68,6 +70,8 @@ engine_close(&e);
 - [x] Memtable
 - [x] Engine (put / get / delete / scan)
 - [x] Freeze memtable
+- [x] Block (on-disk storage unit)
+- [ ] Block iterator
 - [ ] SSTable (flush to disk)
 - [ ] Bloom filter (skip SSTables that cannot contain a key)
 - [ ] Compaction
