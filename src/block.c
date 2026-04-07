@@ -1,8 +1,9 @@
-#include "block.h"
 #include <stddef.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+
+#include "block.h"
 
 int block_builder_init(struct block_builder *bb, size_t target_size)
 {

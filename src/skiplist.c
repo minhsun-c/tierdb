@@ -1,6 +1,7 @@
-#include "skiplist.h"
 #include <stdlib.h>
 #include <string.h>
+
+#include "skiplist.h"
 
 #define SKIPLIST_PROB_NUMERATOR 512
 #define SKIPLIST_PROB_DENOMINATOR 1024

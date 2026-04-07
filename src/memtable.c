@@ -1,8 +1,9 @@
-#include "memtable.h"
 #include <stddef.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+
+#include "memtable.h"
 #include "skiplist.h"
 #include "util.h"
 

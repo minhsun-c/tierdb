@@ -1,9 +1,11 @@
-#include "block_iter.h"
 #include <stddef.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+
 #include "block.h"
+#include "block_iter.h"
+#include "util.h"
 
 /* load entry at iter->idx into iter's key/value fields */
 static int load_entry(struct block_iter *iter)
@@ -29,22 +31,6 @@ static int load_entry(struct block_iter *iter)
     p += sizeof(iter->value_len);
     iter->value_off = (uint16_t) (p - iter->blk->data);
 
-    return 0;
-}
-
-static int key_cmp(const uint8_t *k1,
-                   uint16_t k1_len,
-                   const uint8_t *k2,
-                   uint16_t k2_len)
-{
-    uint16_t min_len = k1_len < k2_len ? k1_len : k2_len;
-    int ret = memcmp(k1, k2, min_len);
-    if (ret != 0)
-        return ret;
-    if (k1_len < k2_len)
-        return -1;
-    if (k1_len > k2_len)
-        return 1;
     return 0;
 }
 
