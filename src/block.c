@@ -5,6 +5,23 @@
 
 #include "block.h"
 
+/** =================
+ * struct block_meta
+ * ==================
+ */
+void block_meta_destroy(struct block_meta *meta)
+{
+    if (!meta)
+        return;
+    free(meta->first_key);
+    free(meta->last_key);
+    memset(meta, 0, sizeof(struct block_meta));
+}
+
+/** ====================
+ * struct block_builder
+ * =====================
+ */
 int block_builder_init(struct block_builder *bb, size_t target_size)
 {
     if (!bb)
@@ -79,6 +96,10 @@ int block_builder_build(struct block_builder *bb, struct block *blk)
     return 0;
 }
 
+/** ============
+ * struct block
+ * =============
+ */
 uint8_t *block_encode(const struct block *blk, size_t *out_len)
 {
     if (!blk || !out_len)

@@ -6,6 +6,36 @@
 #define BLOCK_SIZE 4096 /* default block size in bytes */
 
 /**
+ * struct block_meta - metadata describing one data block within an SST
+ *
+ * Stored in the meta section of the SST file and loaded into memory
+ * when the SST is opened. Used as a lightweight index to locate which
+ * block may contain a given key without reading block data from disk.
+ *
+ * @offset:        byte offset of the block within the SST file
+ * @first_key:     heap-allocated copy of the first key in the block
+ * @first_key_len: length of first_key in bytes
+ * @last_key:      heap-allocated copy of the last key in the block
+ * @last_key_len:  length of last_key in bytes
+ */
+struct block_meta {
+    uint32_t offset;
+    uint8_t *first_key;
+    uint16_t first_key_len;
+    uint8_t *last_key;
+    uint16_t last_key_len;
+};
+
+/**
+ * block_meta_destroy - free internal resources of a block_meta
+ *
+ * Frees first_key and last_key. Does not free the struct itself.
+ *
+ * @param meta: block_meta to destroy
+ */
+void block_meta_destroy(struct block_meta *meta);
+
+/**
  * struct block - a decoded block ready for iteration
  *
  * On-disk layout (after encoding):
