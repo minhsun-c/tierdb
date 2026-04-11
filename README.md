@@ -18,6 +18,7 @@ engine
 ## Features
 
 - **Skiplist-based memtable** — intrusive linked node design inspired by Linux `list_head`
+- **Memtable iterator** — seek-based iteration over a single memtable via skiplist traversal
 - **Write path** — `put`, `delete` (tombstone), automatic freeze on size threshold
 - **Read path** — `get` searches memtables newest-first
 - **Scan** — sorted range iteration via k-way merge iterator over all memtables
@@ -34,6 +35,7 @@ make        # build all
 make test   # run all tests
 make skiplist   # run skiplist tests only
 make memtable   # run memtable tests only
+make mt_iter    # run memtable iterator tests only
 make engine     # run engine tests only
 make lsm_iter   # run iterator tests only
 make block      # run block tests only
