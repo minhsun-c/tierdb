@@ -25,6 +25,7 @@ engine
 - **Block iterator** — seek-based access with `seek_first` and `seek_key` (first key >= target)
 - **SSTable** — immutable on-disk sorted table with block-based data and metadata index
 - **SST builder** — streaming construction with automatic block splitting and incremental disk writes
+- **SST iterator** — seek-based iteration over an entire SST with automatic cross-block loading
 
 ## Building
 
@@ -39,6 +40,7 @@ make block      # run block tests only
 make block_iter # run block iterator tests only
 make sst_builder    # run SSTable builder tests only
 make sst            # run SSTable tests only
+make sst_iter       # run SSTable iterator tests only
 ```
 
 ## Usage
@@ -79,6 +81,7 @@ engine_close(&e);
 - [x] Block (on-disk storage unit)
 - [x] Block iterator
 - [x] SSTable (flush to disk)
+- [x] SSTable iterator
 - [ ] Bloom filter (skip SSTables that cannot contain a key)
 - [ ] Compaction
 - [ ] WAL (crash recovery)
