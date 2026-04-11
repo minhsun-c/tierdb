@@ -12,7 +12,7 @@ tierdb is a from-scratch implementation of an LSM-tree (Log-Structured Merge-tre
 engine
 ├── memtable          — mutable in-memory write buffer (skiplist)
 ├── imm_memtables[]   — frozen immutable memtables, awaiting flush
-└── sstables[]        — on-disk sorted string tables (coming soon)
+└── sstables[]        — on-disk sorted string tables
 ```
 
 ## Features
@@ -23,6 +23,8 @@ engine
 - **Scan** — sorted range iteration via k-way merge iterator over all memtables
 - **Block** — compact binary encoding for on-disk key-value storage, 4KB aligned
 - **Block iterator** — seek-based access with `seek_first` and `seek_key` (first key >= target)
+- **SSTable** — immutable on-disk sorted table with block-based data and metadata index
+- **SST builder** — streaming construction with automatic block splitting and incremental disk writes
 
 ## Building
 
@@ -35,6 +37,8 @@ make engine     # run engine tests only
 make lsm_iter   # run iterator tests only
 make block      # run block tests only
 make block_iter # run block iterator tests only
+make sst_builder    # run SSTable builder tests only
+make sst            # run SSTable tests only
 ```
 
 ## Usage
@@ -74,7 +78,7 @@ engine_close(&e);
 - [x] Freeze memtable
 - [x] Block (on-disk storage unit)
 - [x] Block iterator
-- [ ] SSTable (flush to disk)
+- [x] SSTable (flush to disk)
 - [ ] Bloom filter (skip SSTables that cannot contain a key)
 - [ ] Compaction
 - [ ] WAL (crash recovery)
