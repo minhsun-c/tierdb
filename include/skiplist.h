@@ -46,7 +46,7 @@ typedef int (*skiplist_cmp_fn)(struct skiplist *a, struct skiplist *b);
  * @node:   current node
  * @return: next node, or NULL if this is the last node
  */
-static inline struct skiplist *skiplist_next(struct skiplist *node)
+static inline struct skiplist *skiplist_next(const struct skiplist *node)
 {
     return node->forward[0];
 }
@@ -58,7 +58,7 @@ static inline struct skiplist *skiplist_next(struct skiplist *node)
  * @level:     the level to follow (0 = bottom, max_level-1 = top)
  * @return:    next node at the given level, or NULL if out of range
  */
-static inline struct skiplist *skiplist_next_at(struct skiplist *node,
+static inline struct skiplist *skiplist_next_at(const struct skiplist *node,
                                                 uint32_t level)
 {
     if (level >= node->level)
