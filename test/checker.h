@@ -45,8 +45,8 @@ extern uint32_t failed_test;
 #define EXPECT_STR_EQ(actual, expected, label)                          \
     do {                                                                \
         total_test++;                                                   \
-        if (!!(actual && !!(expected) &&                                \
-               strncmp((actual), (expected), strlen(expected)) == 0)) { \
+        if (!!(actual) && !!(expected) &&                               \
+            strncmp((actual), (expected), strlen(expected)) == 0) {     \
             printf(COLOR_GREEN "[SUCCESS] " COLOR_RESET "%s\n", label); \
         } else {                                                        \
             failed_test++;                                              \
