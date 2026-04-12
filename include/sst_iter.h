@@ -5,6 +5,7 @@
 
 #include "block.h"
 #include "block_iter.h"
+#include "iter.h"
 #include "sst.h"
 
 /**
@@ -151,3 +152,14 @@ int sst_iter_next(struct sst_iter *iter);
  * @param iter: iterator to destroy
  */
 void sst_iter_destroy(struct sst_iter *iter);
+
+/**
+ * sst_iter_to_iter - wrap an SST iterator in the unified interface
+ *
+ * The sst_iter must already be seeked to its starting position.
+ * The sst_iter must remain valid for the lifetime of the iter.
+ *
+ * @param si: source SST iterator
+ * @param it: output unified iterator to populate
+ */
+void sst_iter_to_iter(struct sst_iter *si, struct iter *it);

@@ -2,6 +2,8 @@
 
 #include <stddef.h>
 #include <stdint.h>
+
+#include "iter.h"
 #include "memtable.h"
 
 /**
@@ -129,3 +131,14 @@ int mt_iter_next(struct mt_iter *iter);
  * @param iter: iterator to destroy
  */
 void mt_iter_destroy(struct mt_iter *iter);
+
+/**
+ * mt_iter_to_iter - wrap a memtable iterator in the unified interface
+ *
+ * The mt_iter must already be seeked to its starting position.
+ * The mt_iter must remain valid for the lifetime of the iter.
+ *
+ * @param mi: source memtable iterator
+ * @param it: output unified iterator to populate
+ */
+void mt_iter_to_iter(struct mt_iter *mi, struct iter *it);

@@ -57,3 +57,17 @@ void mt_iter_destroy(struct mt_iter *iter)
 
     memset(iter, 0, sizeof(struct mt_iter));
 }
+
+void mt_iter_to_iter(struct mt_iter *mi, struct iter *it)
+{
+    if (!mi || !it)
+        return;
+
+    it->ctx = mi;
+    it->valid = (int (*)(void *)) mt_iter_is_valid;
+    it->key = (const uint8_t *(*) (void *) ) mt_iter_key;
+    it->key_len = (uint16_t (*)(void *)) mt_iter_key_len;
+    it->value = (const uint8_t *(*) (void *) ) mt_iter_value;
+    it->value_len = (uint16_t (*)(void *)) mt_iter_value_len;
+    it->next = (int (*)(void *)) mt_iter_next;
+}

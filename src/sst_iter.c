@@ -117,3 +117,17 @@ void sst_iter_destroy(struct sst_iter *iter)
     block_iter_destroy(&iter->bi);
     memset(iter, 0, sizeof(struct sst_iter));
 }
+
+void sst_iter_to_iter(struct sst_iter *si, struct iter *it)
+{
+    if (!si || !it)
+        return;
+
+    it->ctx = si;
+    it->valid = (int (*)(void *)) sst_iter_is_valid;
+    it->key = (const uint8_t *(*) (void *) ) sst_iter_key;
+    it->key_len = (uint16_t (*)(void *)) sst_iter_key_len;
+    it->value = (const uint8_t *(*) (void *) ) sst_iter_value;
+    it->value_len = (uint16_t (*)(void *)) sst_iter_value_len;
+    it->next = (int (*)(void *)) sst_iter_next;
+}
