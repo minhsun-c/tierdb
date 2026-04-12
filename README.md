@@ -27,6 +27,8 @@ engine
 - **SSTable** — immutable on-disk sorted table with block-based data and metadata index
 - **SST builder** — streaming construction with automatic block splitting and incremental disk writes
 - **SST iterator** — seek-based iteration over an entire SST with automatic cross-block loading
+- **Unified iterator interface** — generic cursor with function pointers, allowing type-erased iteration over any source
+- **Merge iterator** — k-way merge over mixed memtable and SST iterators with dedup by source priority
 
 ## Building
 
@@ -43,6 +45,7 @@ make block_iter # run block iterator tests only
 make sst_builder    # run SSTable builder tests only
 make sst            # run SSTable tests only
 make sst_iter       # run SSTable iterator tests only
+make merge_iter     # run merge iterator tests only
 ```
 
 ## Usage
@@ -84,6 +87,7 @@ engine_close(&e);
 - [x] Block iterator
 - [x] SSTable (flush to disk)
 - [x] SSTable iterator
+- [x] Merge iterator (k-way merge over memtables and SSTs)
 - [ ] Bloom filter (skip SSTables that cannot contain a key)
 - [ ] Compaction
 - [ ] WAL (crash recovery)
