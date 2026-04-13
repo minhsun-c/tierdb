@@ -3,66 +3,62 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "iter.h"
 #include "lsm_iter.h"
-#include "memtable.h"
+#include "merge_iter.h"
 #include "util.h"
 
-static void find_current(struct lsm_iter *iter)
+static void __lsm_iter_skip_invalid(struct lsm_iter *iter)
 {
-    iter->current_cursor = -1;
-    for (uint32_t i = 0; i < iter->count; i++) {
-        if (!iter->cursors[i])
-            continue;
+    while (merge_iter_is_valid(&iter->merge)) {
+        /* reach upper bound */
+        if (iter->upper && key_cmp(merge_iter_key(&iter->merge),
+                                   merge_iter_key_len(&iter->merge),
+                                   iter->upper, iter->upper_len) > 0) {
+            iter->exhausted = 1;
+            return;
+        }
 
-        /* check upper bound */
-        if (iter->upper &&
-            key_cmp(iter->cursors[i]->key, iter->cursors[i]->key_len,
-                    iter->upper, iter->upper_len) > 0) {
-            iter->cursors[i] = NULL;
+        /* skip tombstone */
+        if (merge_iter_value_len(&iter->merge) == 0) {
+            merge_iter_next(&iter->merge);
             continue;
         }
 
-        if (iter->current_cursor == -1 ||
-            key_cmp(iter->cursors[i]->key, iter->cursors[i]->key_len,
-                    iter->cursors[iter->current_cursor]->key,
-                    iter->cursors[iter->current_cursor]->key_len) < 0) {
-            iter->current_cursor = (int) i;
-        }
+        return;
     }
 }
 
-
 int lsm_iter_init(struct lsm_iter *iter,
-                  struct memtable **sources,
+                  struct iter *iters,
                   uint32_t count,
-                  const uint8_t *lower,
-                  size_t lower_len,
                   const uint8_t *upper,
-                  size_t upper_len)
+                  uint16_t upper_len)
 {
-    if (!iter || !sources)
+    if (!iter || !iters || count == 0)
         return -1;
-    iter->cursors = malloc(sizeof(struct memtable_entry *) * count);
-    if (!iter->cursors)
+
+    if (merge_iter_init(&iter->merge, iters, count) < 0)
         return -1;
-    iter->count = count;
+
     iter->upper = upper;
     iter->upper_len = upper_len;
+    iter->exhausted = 0;
+    iter->iter_buffer = NULL;
 
-    for (uint32_t i = 0; i < count; i++) {
-        struct memtable_entry *entry = memtable_iter_first(sources[i]);
-        if (lower) {
-            while (entry &&
-                   key_cmp(entry->key, entry->key_len, lower, lower_len) < 0) {
-                entry = memtable_iter_next(entry);
-            }
-        }
-        while (entry && entry->value_len == 0) {
-            entry = memtable_iter_next(entry);
-        }
-        iter->cursors[i] = entry;
-    }
-    find_current(iter);
+    __lsm_iter_skip_invalid(iter);
+    return 0;
+}
+
+int lsm_iter_next(struct lsm_iter *iter)
+{
+    if (!iter)
+        return -1;
+
+    if (merge_iter_next(&iter->merge) < 0)
+        return -1;
+
+    __lsm_iter_skip_invalid(iter);
     return 0;
 }
 
@@ -70,28 +66,8 @@ void lsm_iter_destroy(struct lsm_iter *iter)
 {
     if (!iter)
         return;
-    free(iter->cursors);
-    iter->cursors = NULL;
-}
 
-
-void lsm_iter_next(struct lsm_iter *iter)
-{
-    if (!iter || iter->current_cursor == -1)
-        return;
-
-    struct memtable_entry *prev = iter->cursors[iter->current_cursor];
-
-    for (uint32_t i = 0; i < iter->count; i++) {
-        while (iter->cursors[i] &&
-               key_cmp(iter->cursors[i]->key, iter->cursors[i]->key_len,
-                       prev->key, prev->key_len) <= 0) {
-            iter->cursors[i] = memtable_iter_next(iter->cursors[i]);
-        }
-        while (iter->cursors[i] && iter->cursors[i]->value_len == 0) {
-            iter->cursors[i] = memtable_iter_next(iter->cursors[i]);
-        }
-    }
-
-    find_current(iter);
+    free(iter->iter_buffer);
+    merge_iter_destroy(&iter->merge);
+    memset(iter, 0, sizeof(struct lsm_iter));
 }

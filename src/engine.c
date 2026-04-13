@@ -6,6 +6,7 @@
 #include "engine.h"
 #include "lsm_iter.h"
 #include "memtable.h"
+#include "mt_iter.h"
 
 int engine_open(struct engine *e, struct engine_options *opts)
 {
@@ -91,18 +92,42 @@ int engine_scan(struct engine *e,
     if (!e || !iter)
         return -1;
 
-    struct memtable **src =
-        malloc(sizeof(struct memtable *) * (1 + e->imm_count));
-    if (!src)
+    uint32_t count = 1 + e->imm_count;
+
+    void *buf =
+        malloc(count * sizeof(struct mt_iter) + count * sizeof(struct iter));
+    if (!buf)
         return -1;
 
-    src[0] = e->memtable;
-    for (uint32_t i = 1; i <= e->imm_count; i++)
-        src[i] = e->imm_memtables[e->imm_count - i];
-    int ret = lsm_iter_init(iter, src, e->imm_count + 1, lower, lower_len,
-                            upper, upper_len);
-    free(src);
-    return ret;
+    struct mt_iter *mis = buf;
+    struct iter *iters =
+        (struct iter *) ((char *) buf + count * sizeof(struct mt_iter));
+
+    /* mutable memtable */
+    if (lower)
+        mt_iter_seek_key(&mis[0], e->memtable, lower, (uint16_t) lower_len);
+    else
+        mt_iter_seek_first(&mis[0], e->memtable);
+    mt_iter_to_iter(&mis[0], &iters[0]);
+
+    /* immutable memtables */
+    for (uint32_t i = 0; i < e->imm_count; i++) {
+        struct memtable *mt = e->imm_memtables[e->imm_count - 1 - i];
+        if (lower)
+            mt_iter_seek_key(&mis[i + 1], mt, lower, (uint16_t) lower_len);
+        else
+            mt_iter_seek_first(&mis[i + 1], mt);
+        mt_iter_to_iter(&mis[i + 1], &iters[i + 1]);
+    }
+
+    /* init the fields in lsm_iter */
+    if (lsm_iter_init(iter, iters, count, upper, (uint16_t) upper_len) < 0) {
+        free(buf);
+        return -1;
+    }
+    iter->iter_buffer = buf;
+
+    return 0;
 }
 
 int engine_freeze_memtable(struct engine *e)

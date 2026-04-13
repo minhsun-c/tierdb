@@ -2,88 +2,69 @@
 
 #include <stddef.h>
 #include <stdint.h>
-#include "memtable.h"
+#include "iter.h"
+#include "merge_iter.h"
 
 /**
- * struct lsm_iter - sorted iterator over multiple memtables
+ * struct lsm_iter - filtered iterator over the entire LSM tree
  *
- * Implements a k-way merge over an ordered set of memtable cursors.
- * On each call to lsm_iter_next(), the cursor holding the globally
- * smallest key is advanced. When two cursors hold the same key, the
- * one with the lower index (newest source) wins and the duplicate is
- * skipped. Tombstones (value_len == 0) are skipped automatically.
+ * Wraps a merge_iter and adds two filters on top:
+ *   - tombstone skipping (value_len == 0 entries are hidden)
+ *   - upper bound enforcement (entries beyond upper are hidden)
  *
- * The iterator is a snapshot: changes to the underlying memtables
- * after lsm_iter_init() may or may not be visible.
+ * The child iterators (struct iter array) and their backing storage
+ * must remain valid for the lifetime of this iterator.
  *
- * @cursors:        one cursor per source memtable, NULL when exhausted
- * @current_cursor: index into cursors[] pointing to the entry with the
- *                  globally smallest key; -1 when the iterator is invalid
- * @count:          number of cursors (equals number of sources)
- * @upper:          inclusive upper bound key; NULL means unbounded
- * @upper_len:      length of upper bound key in bytes
+ * @merge:        underlying merge iterator
+ * @upper:        inclusive upper bound key; NULL means unbounded
+ * @upper_len:    length of upper bound key in bytes
+ * @exhausted:    1 if the iterator has exceeded the upper bound and
+ *                the entire scan is finished; 0 otherwise
+ * @iter_buffer:  heap-allocated backing memory for child iterators;
+ *                NULL if caller manages lifetime; freed by
+ *                lsm_iter_destroy()
  */
 struct lsm_iter {
-    struct memtable_entry **cursors;
-    int current_cursor;
-    uint32_t count;
+    struct merge_iter merge;
     const uint8_t *upper;
-    size_t upper_len;
+    uint16_t upper_len;
+    int exhausted;
+    void *iter_buffer;
 };
 
 /**
- * lsm_iter_init - initialize an lsm iterator
+ * lsm_iter_init - initialize the LSM iterator
  *
- * Allocates the cursors array and positions each cursor at the first
- * entry >= lower in its source memtable. Sources must be ordered
- * newest first (index 0 = mutable memtable, index 1 = most recently
- * frozen immutable memtable, and so on).
+ * Initializes the underlying merge iterator over the given child
+ * iterators and applies tombstone/upper-bound filtering. Each child
+ * iterator must already be seeked to its starting position and
+ * ordered newest first (index 0 = newest source).
  *
- * After init, lsm_iter_is_valid() must be checked before calling
- * lsm_iter_key(), lsm_iter_value(), or lsm_iter_next().
- *
- * @iter:      iterator to initialize
- * @sources:   memtable array ordered newest first
- * @count:     number of source memtables
- * @lower:     inclusive lower bound key; NULL means start from beginning
- * @lower_len: length of lower bound key in bytes
- * @upper:     inclusive upper bound key; NULL means no upper bound
- * @upper_len: length of upper bound key in bytes
- * @return:    0 on success, -1 on allocation failure
+ * @param iter:      iterator to initialize
+ * @param iters:     array of child iterators; must remain valid for
+ *                   the lifetime of this iterator
+ * @param count:     number of child iterators
+ * @param upper:     inclusive upper bound key; NULL means unbounded
+ * @param upper_len: length of upper bound key in bytes
+ * @return:          0 on success, -1 on failure
  */
 int lsm_iter_init(struct lsm_iter *iter,
-                  struct memtable **sources,
+                  struct iter *iters,
                   uint32_t count,
-                  const uint8_t *lower,
-                  size_t lower_len,
                   const uint8_t *upper,
-                  size_t upper_len);
-
-/**
- * lsm_iter_destroy - release resources held by the iterator
- *
- * Frees the internal cursors array. Does not free the source
- * memtables or their entries — the caller owns those.
- *
- * @iter: iterator to destroy
- */
-void lsm_iter_destroy(struct lsm_iter *iter);
+                  uint16_t upper_len);
 
 /**
  * lsm_iter_is_valid - check whether the iterator has a current entry
  *
- * Returns 0 when all cursors are exhausted or the remaining entries
- * exceed the upper bound. Must be checked before calling key, value,
- * or next.
- *
- * @iter:   iterator to check
- * @return: 1 if the iterator points to a valid entry, 0 otherwise
+ * @param iter: iterator to check
+ * @return:     1 if valid, 0 otherwise
  */
-static inline int lsm_iter_is_valid(struct lsm_iter *iter)
+static inline int lsm_iter_is_valid(const struct lsm_iter *iter)
 {
-    if (!iter)
+    if (!iter || iter->exhausted)
         return 0;
-    return iter->current_cursor != -1;
+    return merge_iter_is_valid(&iter->merge);
 }
 
 /**
@@ -91,12 +72,12 @@ static inline int lsm_iter_is_valid(struct lsm_iter *iter)
  *
  * Behaviour is undefined if lsm_iter_is_valid() returns 0.
  *
- * @iter:   iterator
- * @return: pointer to the current key bytes; valid until lsm_iter_next()
+ * @param iter: iterator
+ * @return:     pointer to the current key bytes
  */
-static inline const uint8_t *lsm_iter_key(struct lsm_iter *iter)
+static inline const uint8_t *lsm_iter_key(const struct lsm_iter *iter)
 {
-    return iter->cursors[iter->current_cursor]->key;
+    return merge_iter_key(&iter->merge);
 }
 
 /**
@@ -104,12 +85,12 @@ static inline const uint8_t *lsm_iter_key(struct lsm_iter *iter)
  *
  * Behaviour is undefined if lsm_iter_is_valid() returns 0.
  *
- * @iter:   iterator
- * @return: current key length in bytes
+ * @param iter: iterator
+ * @return:     current key length in bytes
  */
-static inline size_t lsm_iter_key_len(struct lsm_iter *iter)
+static inline uint16_t lsm_iter_key_len(const struct lsm_iter *iter)
 {
-    return iter->cursors[iter->current_cursor]->key_len;
+    return merge_iter_key_len(&iter->merge);
 }
 
 /**
@@ -117,12 +98,12 @@ static inline size_t lsm_iter_key_len(struct lsm_iter *iter)
  *
  * Behaviour is undefined if lsm_iter_is_valid() returns 0.
  *
- * @iter:   iterator
- * @return: pointer to the current value bytes; valid until lsm_iter_next()
+ * @param iter: iterator
+ * @return:     pointer to the current value bytes
  */
-static inline const uint8_t *lsm_iter_value(struct lsm_iter *iter)
+static inline const uint8_t *lsm_iter_value(const struct lsm_iter *iter)
 {
-    return iter->cursors[iter->current_cursor]->value;
+    return merge_iter_value(&iter->merge);
 }
 
 /**
@@ -130,21 +111,30 @@ static inline const uint8_t *lsm_iter_value(struct lsm_iter *iter)
  *
  * Behaviour is undefined if lsm_iter_is_valid() returns 0.
  *
- * @iter:   iterator
- * @return: current value length in bytes
+ * @param iter: iterator
+ * @return:     current value length in bytes
  */
-static inline size_t lsm_iter_value_len(struct lsm_iter *iter)
+static inline uint16_t lsm_iter_value_len(const struct lsm_iter *iter)
 {
-    return iter->cursors[iter->current_cursor]->value_len;
+    return merge_iter_value_len(&iter->merge);
 }
 
 /**
- * lsm_iter_next - advance to the next valid entry
+ * lsm_iter_next - advance to the next visible entry
  *
- * Advances the cursor holding the current smallest key, then skips
- * any duplicate keys (keeping the newest version) and any tombstones.
- * Behaviour is undefined if lsm_iter_is_valid() returns 0.
+ * Skips tombstones and entries beyond the upper bound.
  *
- * @iter: iterator to advance
+ * @param iter: iterator to advance
+ * @return:     0 on success, -1 on failure
  */
-void lsm_iter_next(struct lsm_iter *iter);
+int lsm_iter_next(struct lsm_iter *iter);
+
+/**
+ * lsm_iter_destroy - release resources held by the iterator
+ *
+ * Destroys the underlying merge_iter. Does not destroy the child
+ * iterators — the caller owns them.
+ *
+ * @param iter: iterator to destroy
+ */
+void lsm_iter_destroy(struct lsm_iter *iter);

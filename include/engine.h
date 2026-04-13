@@ -2,9 +2,9 @@
 
 #include <stddef.h>
 #include <stdint.h>
+#include "lsm_iter.h"
 
 struct memtable;
-struct lsm_iter;
 
 /**
  * struct engine_options - configuration passed to engine_open
@@ -110,9 +110,10 @@ int engine_delete(struct engine *e, const uint8_t *key, size_t key_len);
 /**
  * engine_scan - create a sorted iterator over a key range
  *
- * Builds a source array from the mutable and all immutable memtables
- * (newest first) and initializes an lsm_iter over them. The caller
- * must call lsm_iter_destroy() when done.
+ * Builds mt_iter for the mutable and all immutable memtables,
+ * wraps them in a unified iter array, and initializes an lsm_iter
+ * with tombstone skipping and upper bound enforcement. All backing
+ * memory is allocated in a single block and freed by lsm_iter_destroy().
  *
  * @e:         target engine
  * @lower:     inclusive lower bound key; NULL means unbounded
