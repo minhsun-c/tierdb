@@ -23,6 +23,10 @@
  * @iter_buffer:  heap-allocated backing memory for child iterators;
  *                NULL if caller manages lifetime; freed by
  *                lsm_iter_destroy()
+ * @sis:          pointer to the sst_iter array within iter_buffer;
+ *                used by lsm_iter_destroy to free block memory held
+ *                by each sst_iter; NULL if no SSTs
+ * @sst_count:    number of sst_iters pointed to by sis
  */
 struct lsm_iter {
     struct merge_iter merge;
@@ -30,6 +34,8 @@ struct lsm_iter {
     uint16_t upper_len;
     int exhausted;
     void *iter_buffer;
+    struct sst_iter *sis;
+    uint32_t sst_count;
 };
 
 /**

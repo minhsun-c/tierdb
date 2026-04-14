@@ -12,6 +12,7 @@
 #include "mt_iter.h"
 #include "sst.h"
 #include "sst_builder.h"
+#include "sst_iter.h"
 
 int engine_open(struct engine *e, struct engine_options *opts, const char *path)
 {
@@ -103,21 +104,63 @@ int engine_put(struct engine *e,
     return 0;
 }
 
-struct memtable_entry *engine_get(struct engine *e,
-                                  const uint8_t *key,
-                                  size_t key_len)
+int engine_get(struct engine *e,
+               const uint8_t *key,
+               size_t key_len,
+               uint8_t *value,
+               size_t value_cap,
+               size_t *value_len)
 {
     if (!e || !key || key_len == 0)
-        return NULL;
+        return -1;
+
+    /* search in memtable */
     struct memtable_entry *entry = memtable_get(e->memtable, key, key_len);
     if (entry)
-        return entry;
+        goto FOUND_IN_MT;
     for (int i = (int) e->imm_count - 1; i >= 0; i--) {
         entry = memtable_get(e->imm_memtables[i], key, key_len);
         if (entry)
-            return entry;
+            goto FOUND_IN_MT;
     }
-    return NULL;
+
+    /* search in sstable */
+    struct sst_iter si;
+    for (int i = (int) e->sst_count - 1; i >= 0; i--) {
+        if (sst_iter_seek_key(&si, &e->ssts[i], key, key_len) < 0)
+            continue;
+        if (!sst_iter_is_valid(&si)) {
+            sst_iter_destroy(&si);
+            continue;
+        }
+        if (key_cmp(key, key_len, sst_iter_key(&si), sst_iter_key_len(&si)) ==
+            0) {
+            goto FOUND_IN_SST;
+        }
+        sst_iter_destroy(&si);
+    }
+
+    return -1;
+
+FOUND_IN_MT:
+    *value_len = entry->value_len;
+    if (*value_len > 0) {
+        if (*value_len > value_cap)
+            return -1;
+        memcpy(value, entry->value, *value_len);
+    }
+    return 0;
+FOUND_IN_SST:
+    *value_len = sst_iter_value_len(&si);
+    if (*value_len > 0) {
+        if (*value_len > value_cap) {
+            sst_iter_destroy(&si);
+            return -1;
+        }
+        memcpy(value, sst_iter_value(&si), *value_len);
+    }
+    sst_iter_destroy(&si);
+    return 0;
 }
 
 int engine_delete(struct engine *e, const uint8_t *key, size_t key_len)
@@ -135,16 +178,20 @@ int engine_scan(struct engine *e,
     if (!e || !iter)
         return -1;
 
-    uint32_t count = 1 + e->imm_count;
+    uint32_t count = 1 + e->imm_count + e->sst_count;
 
-    void *buf =
-        malloc(count * sizeof(struct mt_iter) + count * sizeof(struct iter));
+    void *buf = malloc((1 + e->imm_count) * sizeof(struct mt_iter) +
+                       e->sst_count * sizeof(struct sst_iter) +
+                       count * sizeof(struct iter));
     if (!buf)
         return -1;
 
-    struct mt_iter *mis = buf;
-    struct iter *iters =
-        (struct iter *) ((char *) buf + count * sizeof(struct mt_iter));
+    struct iter *iters = buf;
+    struct mt_iter *mis =
+        (struct mt_iter *) ((char *) buf + count * sizeof(struct iter));
+    struct sst_iter *sis =
+        (struct sst_iter *) ((char *) mis +
+                             (1 + e->imm_count) * sizeof(struct mt_iter));
 
     /* mutable memtable */
     if (lower)
@@ -163,12 +210,26 @@ int engine_scan(struct engine *e,
         mt_iter_to_iter(&mis[i + 1], &iters[i + 1]);
     }
 
+    /* sstables */
+    for (uint32_t i = 0; i < e->sst_count; i++) {
+        struct sst *sst = &e->ssts[e->sst_count - 1 - i];
+        if (lower)
+            sst_iter_seek_key(&sis[i], sst, lower, (uint16_t) lower_len);
+        else
+            sst_iter_seek_first(&sis[i], sst);
+        sst_iter_to_iter(&sis[i], &iters[i + 1 + e->imm_count]);
+    }
+
     /* init the fields in lsm_iter */
     if (lsm_iter_init(iter, iters, count, upper, (uint16_t) upper_len) < 0) {
         free(buf);
         return -1;
     }
+
+    /* store the buffer into lsm_iter */
     iter->iter_buffer = buf;
+    iter->sis = sis;
+    iter->sst_count = e->sst_count;
 
     return 0;
 }

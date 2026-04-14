@@ -20,8 +20,8 @@ engine
 - **Skiplist-based memtable** — intrusive linked node design inspired by Linux `list_head`
 - **Memtable iterator** — seek-based iteration over a single memtable via skiplist traversal
 - **Write path** — `put`, `delete` (tombstone), automatic freeze on size threshold
-- **Read path** — `get` searches memtables newest-first
-- **Scan** — sorted range iteration via k-way merge iterator over all memtables
+- **Read path** — `get` searches memtables then L0 SSTs newest-first
+- **Scan** — sorted range iteration via k-way merge iterator over all memtables and SSTs
 - **Block** — compact binary encoding for on-disk key-value storage, 4KB aligned
 - **Block iterator** — seek-based access with `seek_first` and `seek_key` (first key >= target)
 - **SSTable** — immutable on-disk sorted table with block-based data and metadata index
@@ -63,9 +63,10 @@ engine_open(&e, &opts, "/tmp/mydb");
 
 engine_put(&e, (uint8_t *) "hello", 5, (uint8_t *) "world", 5);
 
-struct memtable_entry *entry = engine_get(&e, (uint8_t *) "hello", 5);
-if (entry && entry->value_len > 0)
-    printf("%.*s\n", (int) entry->value_len, entry->value);
+uint8_t buf[256];
+size_t vlen;
+if (engine_get(&e, (uint8_t *) "hello", 5, buf, sizeof(buf), &vlen) == 0 && vlen > 0)
+    printf("%.*s\n", (int) vlen, buf);
 
 /* range scan */
 struct lsm_iter iter;

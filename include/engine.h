@@ -104,17 +104,26 @@ int engine_put(struct engine *e,
  * engine_get - look up a key
  *
  * Searches the mutable memtable first, then immutable memtables
- * from newest to oldest. Returns the first match.
- * Caller must check entry->value_len == 0 for tombstone.
+ * from newest to oldest, then L0 SSTs from newest to oldest.
+ * Returns the value from the first match found.
  *
- * @e:       target engine
- * @key:     key bytes
- * @key_len: length of key
- * @return:  pointer to the entry, or NULL if not found
+ * @param e:         target engine
+ * @param key:       key bytes to search for
+ * @param key_len:   length of key in bytes
+ * @param value:     caller-provided buffer to copy the value into
+ * @param value_cap: capacity of the value buffer in bytes
+ * @param value_len: set to the actual value length on success;
+ *                   0 indicates a tombstone (deleted key);
+ *                   set even when the buffer is too small
+ * @return:          0 if found (including tombstone),
+ *                   -1 if not found or buffer too small
  */
-struct memtable_entry *engine_get(struct engine *e,
-                                  const uint8_t *key,
-                                  size_t key_len);
+int engine_get(struct engine *e,
+               const uint8_t *key,
+               size_t key_len,
+               uint8_t *value,
+               size_t value_cap,
+               size_t *value_len);
 
 /**
  * engine_delete - delete a key by inserting a tombstone
@@ -131,18 +140,19 @@ int engine_delete(struct engine *e, const uint8_t *key, size_t key_len);
 /**
  * engine_scan - create a sorted iterator over a key range
  *
- * Builds mt_iter for the mutable and all immutable memtables,
- * wraps them in a unified iter array, and initializes an lsm_iter
- * with tombstone skipping and upper bound enforcement. All backing
- * memory is allocated in a single block and freed by lsm_iter_destroy().
+ * Builds mt_iter for the mutable and all immutable memtables and
+ * sst_iter for all L0 SSTs, wraps them in a unified iter array,
+ * and initializes an lsm_iter with tombstone skipping and upper
+ * bound enforcement. All backing memory is allocated in a single
+ * block and freed by lsm_iter_destroy().
  *
- * @e:         target engine
- * @lower:     inclusive lower bound key; NULL means unbounded
- * @lower_len: length of lower bound key in bytes
- * @upper:     inclusive upper bound key; NULL means unbounded
- * @upper_len: length of upper bound key in bytes
- * @iter:      iterator to initialize
- * @return:    0 on success, -1 on allocation failure
+ * @param e:         target engine
+ * @param lower:     inclusive lower bound key; NULL means unbounded
+ * @param lower_len: length of lower bound key in bytes
+ * @param upper:     inclusive upper bound key; NULL means unbounded
+ * @param upper_len: length of upper bound key in bytes
+ * @param iter:      iterator to initialize
+ * @return:          0 on success, -1 on allocation failure
  */
 int engine_scan(struct engine *e,
                 const uint8_t *lower,

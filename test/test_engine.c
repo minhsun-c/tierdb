@@ -1,13 +1,12 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include "block.h"
 #include "checker.h"
 #include "engine.h"
 #include "lsm_iter.h"
 #include "memtable.h"
 #include "util.h"
-
-#define BLOCK_SIZE 4096
 
 uint32_t total_test = 0;
 uint32_t failed_test = 0;
@@ -36,7 +35,6 @@ static const uint8_t *v(const char *s)
 
 static void cleanup_db(void)
 {
-    /* remove SST files and directory */
     char cmd[512];
     snprintf(cmd, sizeof(cmd), "rm -rf %s", DB_PATH);
     system(cmd);
@@ -80,18 +78,20 @@ static void test_put_and_get(void)
     engine_put(&e, k("banana"), 6, v("2"), 1);
     engine_put(&e, k("cherry"), 6, v("3"), 1);
 
-    struct memtable_entry *entry;
+    char buf[256];
+    size_t vlen;
 
-    entry = engine_get(&e, k("apple"), 5);
-    EXPECT_COND(entry != NULL, "apple found");
-    EXPECT_STR_EQ((char *) entry->value, "1", "apple value is 1");
+    EXPECT_EQ(engine_get(&e, k("apple"), 5, (uint8_t *) buf, 256, &vlen), 0,
+              "apple found");
+    EXPECT_EQ(vlen, 1, "apple value_len is 1");
+    EXPECT_COND(memcmp(buf, "1", 1) == 0, "apple value is 1");
 
-    entry = engine_get(&e, k("banana"), 6);
-    EXPECT_COND(entry != NULL, "banana found");
-    EXPECT_STR_EQ((char *) entry->value, "2", "banana value is 2");
+    EXPECT_EQ(engine_get(&e, k("banana"), 6, (uint8_t *) buf, 256, &vlen), 0,
+              "banana found");
+    EXPECT_COND(memcmp(buf, "2", 1) == 0, "banana value is 2");
 
-    entry = engine_get(&e, k("mango"), 5);
-    EXPECT_COND(entry == NULL, "mango not found");
+    EXPECT_EQ(engine_get(&e, k("mango"), 5, (uint8_t *) buf, 256, &vlen), -1,
+              "mango not found");
 
     engine_close(&e);
     cleanup_db();
@@ -108,9 +108,10 @@ static void test_overwrite(void)
     engine_put(&e, k("key"), 3, v("old"), 3);
     engine_put(&e, k("key"), 3, v("new"), 3);
 
-    struct memtable_entry *entry = engine_get(&e, k("key"), 3);
-    EXPECT_COND(entry != NULL, "key found");
-    EXPECT_STR_EQ((char *) entry->value, "new", "value updated to new");
+    char buf[256];
+    size_t vlen;
+    engine_get(&e, k("key"), 3, (uint8_t *) buf, 256, &vlen);
+    EXPECT_COND(memcmp(buf, "new", 3) == 0, "value updated to new");
 
     engine_close(&e);
     cleanup_db();
@@ -127,9 +128,11 @@ static void test_delete(void)
     engine_put(&e, k("key"), 3, v("val"), 3);
     engine_delete(&e, k("key"), 3);
 
-    struct memtable_entry *entry = engine_get(&e, k("key"), 3);
-    EXPECT_COND(entry != NULL, "tombstone entry exists");
-    EXPECT_EQ(entry->value_len, 0, "value_len is 0 (tombstone)");
+    size_t vlen;
+    char buf[256];
+    int ret = engine_get(&e, k("key"), 3, (uint8_t *) buf, 256, &vlen);
+    EXPECT_EQ(ret, 0, "tombstone entry found");
+    EXPECT_EQ(vlen, 0, "value_len is 0 (tombstone)");
 
     engine_close(&e);
     cleanup_db();
@@ -173,15 +176,14 @@ static void test_get_across_freeze(void)
     engine_freeze_memtable(&e);
     engine_put(&e, k("banana"), 6, v("2"), 1);
 
-    struct memtable_entry *entry;
+    char buf[256];
+    size_t vlen;
 
-    entry = engine_get(&e, k("apple"), 5);
-    EXPECT_COND(entry != NULL, "apple found across freeze");
-    EXPECT_STR_EQ((char *) entry->value, "1", "apple value correct");
+    engine_get(&e, k("apple"), 5, (uint8_t *) buf, 256, &vlen);
+    EXPECT_COND(memcmp(buf, "1", 1) == 0, "apple found across freeze");
 
-    entry = engine_get(&e, k("banana"), 6);
-    EXPECT_COND(entry != NULL, "banana found in mutable");
-    EXPECT_STR_EQ((char *) entry->value, "2", "banana value correct");
+    engine_get(&e, k("banana"), 6, (uint8_t *) buf, 256, &vlen);
+    EXPECT_COND(memcmp(buf, "2", 1) == 0, "banana found in mutable");
 
     engine_close(&e);
     cleanup_db();
@@ -199,9 +201,10 @@ static void test_overwrite_across_freeze(void)
     engine_freeze_memtable(&e);
     engine_put(&e, k("key"), 3, v("new"), 3);
 
-    struct memtable_entry *entry = engine_get(&e, k("key"), 3);
-    EXPECT_COND(entry != NULL, "key found");
-    EXPECT_STR_EQ((char *) entry->value, "new", "new value takes precedence");
+    char buf[256];
+    size_t vlen;
+    engine_get(&e, k("key"), 3, (uint8_t *) buf, 256, &vlen);
+    EXPECT_COND(memcmp(buf, "new", 3) == 0, "new value takes precedence");
 
     engine_close(&e);
     cleanup_db();
@@ -219,9 +222,11 @@ static void test_delete_across_freeze(void)
     engine_freeze_memtable(&e);
     engine_delete(&e, k("key"), 3);
 
-    struct memtable_entry *entry = engine_get(&e, k("key"), 3);
-    EXPECT_COND(entry != NULL, "tombstone found");
-    EXPECT_EQ(entry->value_len, 0, "tombstone hides old value");
+    size_t vlen;
+    char buf[256];
+    int ret = engine_get(&e, k("key"), 3, (uint8_t *) buf, 256, &vlen);
+    EXPECT_EQ(ret, 0, "tombstone found");
+    EXPECT_EQ(vlen, 0, "tombstone hides old value");
 
     engine_close(&e);
     cleanup_db();
@@ -310,7 +315,6 @@ static void test_flush_multiple(void)
     struct engine_options opts = default_opts();
     engine_open(&e, &opts, DB_PATH);
 
-    /* freeze twice */
     engine_put(&e, k("aaa"), 3, v("111"), 3);
     engine_freeze_memtable(&e);
     engine_put(&e, k("bbb"), 3, v("222"), 3);
@@ -318,12 +322,10 @@ static void test_flush_multiple(void)
 
     EXPECT_EQ(e.imm_count, 2, "2 immutables before flush");
 
-    /* flush oldest */
     engine_flush(&e);
     EXPECT_EQ(e.imm_count, 1, "1 immutable after first flush");
     EXPECT_EQ(e.sst_count, 1, "1 SST after first flush");
 
-    /* flush second */
     engine_flush(&e);
     EXPECT_EQ(e.imm_count, 0, "0 immutables after second flush");
     EXPECT_EQ(e.sst_count, 2, "2 SSTs after second flush");
@@ -361,10 +363,10 @@ static void test_flush_preserves_mutable(void)
 
     engine_flush(&e);
 
-    /* mutable memtable should still have "new" */
-    struct memtable_entry *entry = engine_get(&e, k("new"), 3);
-    EXPECT_COND(entry != NULL, "mutable entry survives flush");
-    EXPECT_STR_EQ((char *) entry->value, "mut", "mutable value correct");
+    char buf[256];
+    size_t vlen;
+    engine_get(&e, k("new"), 3, (uint8_t *) buf, 256, &vlen);
+    EXPECT_COND(memcmp(buf, "mut", 3) == 0, "mutable entry survives flush");
 
     engine_close(&e);
     cleanup_db();
@@ -393,7 +395,144 @@ static void test_flush_with_tombstone(void)
 
 /*
  * ========================================
- * tests - iterators
+ * tests - get across flush (SST read path)
+ * ========================================
+ */
+static void test_get_from_sst(void)
+{
+    printf(COLOR_BLUE "\n--- Get From SST ---\n" COLOR_RESET);
+    cleanup_db();
+    struct engine e;
+    struct engine_options opts = default_opts();
+    engine_open(&e, &opts, DB_PATH);
+
+    engine_put(&e, k("apple"), 5, v("red"), 3);
+    engine_put(&e, k("banana"), 6, v("yellow"), 6);
+    engine_freeze_memtable(&e);
+    engine_flush(&e);
+
+    char buf[256];
+    size_t vlen;
+
+    EXPECT_EQ(engine_get(&e, k("apple"), 5, (uint8_t *) buf, 256, &vlen), 0,
+              "apple found in SST");
+    EXPECT_COND(memcmp(buf, "red", 3) == 0, "apple value is red");
+
+    EXPECT_EQ(engine_get(&e, k("banana"), 6, (uint8_t *) buf, 256, &vlen), 0,
+              "banana found in SST");
+    EXPECT_COND(memcmp(buf, "yellow", 6) == 0, "banana value is yellow");
+
+    EXPECT_EQ(engine_get(&e, k("mango"), 5, (uint8_t *) buf, 256, &vlen), -1,
+              "mango not found");
+
+    engine_close(&e);
+    cleanup_db();
+}
+
+static void test_get_memtable_overrides_sst(void)
+{
+    printf(COLOR_BLUE "\n--- Get Memtable Overrides SST ---\n" COLOR_RESET);
+    cleanup_db();
+    struct engine e;
+    struct engine_options opts = default_opts();
+    engine_open(&e, &opts, DB_PATH);
+
+    engine_put(&e, k("key"), 3, v("old"), 3);
+    engine_freeze_memtable(&e);
+    engine_flush(&e);
+
+    engine_put(&e, k("key"), 3, v("new"), 3);
+
+    char buf[256];
+    size_t vlen;
+    engine_get(&e, k("key"), 3, (uint8_t *) buf, 256, &vlen);
+    EXPECT_COND(memcmp(buf, "new", 3) == 0, "memtable value wins over SST");
+
+    engine_close(&e);
+    cleanup_db();
+}
+
+static void test_delete_hides_sst(void)
+{
+    printf(COLOR_BLUE "\n--- Delete Hides SST ---\n" COLOR_RESET);
+    cleanup_db();
+    struct engine e;
+    struct engine_options opts = default_opts();
+    engine_open(&e, &opts, DB_PATH);
+
+    engine_put(&e, k("apple"), 5, v("red"), 3);
+    engine_freeze_memtable(&e);
+    engine_flush(&e);
+
+    engine_delete(&e, k("apple"), 5);
+
+    size_t vlen;
+    char buf[256];
+    int ret = engine_get(&e, k("apple"), 5, (uint8_t *) buf, 256, &vlen);
+    EXPECT_EQ(ret, 0, "tombstone found");
+    EXPECT_EQ(vlen, 0, "delete hides SST value");
+
+    engine_close(&e);
+    cleanup_db();
+}
+
+static void test_get_across_multiple_ssts(void)
+{
+    printf(COLOR_BLUE "\n--- Get Across Multiple SSTs ---\n" COLOR_RESET);
+    cleanup_db();
+    struct engine e;
+    struct engine_options opts = default_opts();
+    engine_open(&e, &opts, DB_PATH);
+
+    engine_put(&e, k("apple"), 5, v("sst0"), 4);
+    engine_put(&e, k("banana"), 6, v("sst0"), 4);
+    engine_freeze_memtable(&e);
+    engine_flush(&e);
+
+    engine_put(&e, k("banana"), 6, v("sst1"), 4);
+    engine_put(&e, k("cherry"), 6, v("sst1"), 4);
+    engine_freeze_memtable(&e);
+    engine_flush(&e);
+
+    char buf[256];
+    size_t vlen;
+
+    engine_get(&e, k("apple"), 5, (uint8_t *) buf, 256, &vlen);
+    EXPECT_COND(memcmp(buf, "sst0", 4) == 0, "apple from older SST");
+
+    engine_get(&e, k("banana"), 6, (uint8_t *) buf, 256, &vlen);
+    EXPECT_COND(memcmp(buf, "sst1", 4) == 0, "banana from newer SST");
+
+    engine_get(&e, k("cherry"), 6, (uint8_t *) buf, 256, &vlen);
+    EXPECT_COND(memcmp(buf, "sst1", 4) == 0, "cherry from newer SST");
+
+    engine_close(&e);
+    cleanup_db();
+}
+
+static void test_get_buffer_too_small(void)
+{
+    printf(COLOR_BLUE "\n--- Get Buffer Too Small ---\n" COLOR_RESET);
+    cleanup_db();
+    struct engine e;
+    struct engine_options opts = default_opts();
+    engine_open(&e, &opts, DB_PATH);
+
+    engine_put(&e, k("key"), 3, v("longvalue"), 9);
+
+    char buf[4];
+    size_t vlen;
+    int ret = engine_get(&e, k("key"), 3, (uint8_t *) buf, 4, &vlen);
+    EXPECT_EQ(ret, -1, "buffer too small returns -1");
+    EXPECT_EQ(vlen, 9, "value_len still set");
+
+    engine_close(&e);
+    cleanup_db();
+}
+
+/*
+ * ========================================
+ * tests - scan
  * ========================================
  */
 static void test_scan_basic(void)
@@ -517,6 +656,99 @@ static void test_scan_skip_tombstone(void)
     cleanup_db();
 }
 
+static void test_scan_across_flush(void)
+{
+    printf(COLOR_BLUE "\n--- Scan Across Flush ---\n" COLOR_RESET);
+    cleanup_db();
+    struct engine e;
+    struct engine_options opts = default_opts();
+    engine_open(&e, &opts, DB_PATH);
+
+    engine_put(&e, k("apple"), 5, v("1"), 1);
+    engine_put(&e, k("cherry"), 6, v("3"), 1);
+    engine_freeze_memtable(&e);
+    engine_flush(&e);
+
+    engine_put(&e, k("banana"), 6, v("2"), 1);
+    engine_put(&e, k("mango"), 5, v("4"), 1);
+
+    struct lsm_iter iter;
+    engine_scan(&e, NULL, 0, NULL, 0, &iter);
+
+    const char *expected[] = {"apple", "banana", "cherry", "mango"};
+    int i = 0;
+    while (lsm_iter_is_valid(&iter)) {
+        EXPECT_STR_EQ((char *) lsm_iter_key(&iter), expected[i], expected[i]);
+        i++;
+        lsm_iter_next(&iter);
+    }
+    EXPECT_EQ(i, 4, "scanned 4 entries across flush");
+
+    lsm_iter_destroy(&iter);
+    engine_close(&e);
+    cleanup_db();
+}
+
+static void test_scan_dedup_across_flush(void)
+{
+    printf(COLOR_BLUE "\n--- Scan Dedup Across Flush ---\n" COLOR_RESET);
+    cleanup_db();
+    struct engine e;
+    struct engine_options opts = default_opts();
+    engine_open(&e, &opts, DB_PATH);
+
+    engine_put(&e, k("key"), 3, v("old"), 3);
+    engine_freeze_memtable(&e);
+    engine_flush(&e);
+
+    engine_put(&e, k("key"), 3, v("new"), 3);
+
+    struct lsm_iter iter;
+    engine_scan(&e, NULL, 0, NULL, 0, &iter);
+
+    EXPECT_COND(lsm_iter_is_valid(&iter), "valid");
+    EXPECT_COND(memcmp(lsm_iter_key(&iter), "key", 3) == 0, "key is key");
+    EXPECT_COND(memcmp(lsm_iter_value(&iter), "new", 3) == 0,
+                "memtable value wins");
+
+    lsm_iter_next(&iter);
+    EXPECT_COND(!lsm_iter_is_valid(&iter), "only one entry (dedup)");
+
+    lsm_iter_destroy(&iter);
+    engine_close(&e);
+    cleanup_db();
+}
+
+static void test_scan_tombstone_hides_sst(void)
+{
+    printf(COLOR_BLUE "\n--- Scan Tombstone Hides SST ---\n" COLOR_RESET);
+    cleanup_db();
+    struct engine e;
+    struct engine_options opts = default_opts();
+    engine_open(&e, &opts, DB_PATH);
+
+    engine_put(&e, k("apple"), 5, v("red"), 3);
+    engine_put(&e, k("banana"), 6, v("yellow"), 6);
+    engine_freeze_memtable(&e);
+    engine_flush(&e);
+
+    engine_delete(&e, k("apple"), 5);
+
+    struct lsm_iter iter;
+    engine_scan(&e, NULL, 0, NULL, 0, &iter);
+
+    EXPECT_COND(lsm_iter_is_valid(&iter), "valid");
+    EXPECT_COND(memcmp(lsm_iter_key(&iter), "banana", 6) == 0,
+                "apple hidden, banana visible");
+
+    lsm_iter_next(&iter);
+    EXPECT_COND(!lsm_iter_is_valid(&iter), "only banana");
+
+    lsm_iter_destroy(&iter);
+    engine_close(&e);
+    cleanup_db();
+}
+
 /*
  * ========================================
  * main
@@ -526,25 +758,42 @@ int main(void)
 {
     srand(42);
 
+    /* basic */
     test_open_close();
     test_put_and_get();
     test_overwrite();
     test_delete();
+
+    /* freeze */
     test_freeze();
     test_get_across_freeze();
     test_overwrite_across_freeze();
     test_delete_across_freeze();
     test_auto_freeze();
     test_freeze_full();
+
+    /* flush */
     test_flush_basic();
     test_flush_multiple();
     test_flush_no_imm();
     test_flush_preserves_mutable();
     test_flush_with_tombstone();
+
+    /* get across flush */
+    test_get_from_sst();
+    test_get_memtable_overrides_sst();
+    test_delete_hides_sst();
+    test_get_across_multiple_ssts();
+    test_get_buffer_too_small();
+
+    /* scan */
     test_scan_basic();
     test_scan_with_bounds();
     test_scan_across_freeze();
     test_scan_skip_tombstone();
+    test_scan_across_flush();
+    test_scan_dedup_across_flush();
+    test_scan_tombstone_hides_sst();
 
     TEST_SUMMARY();
 }

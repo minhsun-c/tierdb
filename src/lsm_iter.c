@@ -6,6 +6,7 @@
 #include "iter.h"
 #include "lsm_iter.h"
 #include "merge_iter.h"
+#include "sst_iter.h"
 #include "util.h"
 
 static void __lsm_iter_skip_invalid(struct lsm_iter *iter)
@@ -67,7 +68,11 @@ void lsm_iter_destroy(struct lsm_iter *iter)
     if (!iter)
         return;
 
-    free(iter->iter_buffer);
+    if (iter->sis)
+        for (uint32_t i = 0; i < iter->sst_count; i++)
+            sst_iter_destroy(&iter->sis[i]);
+
     merge_iter_destroy(&iter->merge);
+    free(iter->iter_buffer);
     memset(iter, 0, sizeof(struct lsm_iter));
 }
