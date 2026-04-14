@@ -1,18 +1,24 @@
+#include <errno.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 
 #include "engine.h"
 #include "lsm_iter.h"
 #include "memtable.h"
 #include "mt_iter.h"
+#include "sst.h"
+#include "sst_builder.h"
 
-int engine_open(struct engine *e, struct engine_options *opts)
+int engine_open(struct engine *e, struct engine_options *opts, const char *path)
 {
     if (!e || !opts)
         return -1;
 
+    /* mutable memtable */
     e->memtable = malloc(sizeof(struct memtable));
     if (!e->memtable)
         return -1;
@@ -20,22 +26,51 @@ int engine_open(struct engine *e, struct engine_options *opts)
         free(e->memtable);
         return -1;
     }
+
+    /* immutable memtable */
     e->imm_memtables = calloc(opts->imm_cap, sizeof(struct memtable *));
-    if (!e->imm_memtables) {
-        memtable_destroy(e->memtable);
-        free(e->memtable);
-        return -1;
-    }
+    if (!e->imm_memtables)
+        goto DESTROY_MT;
     e->imm_count = 0;
+
+    /* sstable */
+    e->sst_count = 0;
+    e->sst_cap = 16;
+    e->ssts = calloc(e->sst_cap, sizeof(struct sst));
+    if (!e->ssts)
+        goto DESTROY_IMM_MT;
+
+    /* path */
+    if (mkdir(path, 0755) < 0 && errno != EEXIST)
+        goto DESTROY_SST;
+    e->db_path = strdup(path);
+    if (!e->db_path)
+        goto DESTROY_SST;
+
     e->next_id = 1;
     memcpy(&e->opts, opts, sizeof(struct engine_options));
+
+    if (e->opts.block_size == 0)
+        e->opts.block_size = BLOCK_SIZE;
     return 0;
+
+DESTROY_SST:
+    free(e->ssts);
+DESTROY_IMM_MT:
+    free(e->imm_memtables);
+DESTROY_MT:
+    memtable_destroy(e->memtable);
+    free(e->memtable);
+    memset(e, 0, sizeof(struct engine));
+    return -1;
 }
 
 void engine_close(struct engine *e)
 {
     if (!e)
         return;
+
+    /* memtable */
     memtable_destroy(e->memtable);
     free(e->memtable);
     for (uint32_t i = 0; i < e->imm_count; i++) {
@@ -43,6 +78,14 @@ void engine_close(struct engine *e)
         free(e->imm_memtables[i]);
     }
     free(e->imm_memtables);
+
+    /* sstable */
+    for (uint32_t i = 0; i < e->sst_count; i++)
+        sst_close(&e->ssts[i]);
+    free(e->ssts);
+
+    /* path */
+    free(e->db_path);
 }
 
 int engine_put(struct engine *e,
@@ -146,5 +189,69 @@ int engine_freeze_memtable(struct engine *e)
     e->imm_memtables[e->imm_count] = e->memtable;
     e->imm_count++;
     e->memtable = new_mt;
+    return 0;
+}
+
+int engine_flush(struct engine *e)
+{
+    if (!e || e->imm_count == 0)
+        return -1;
+
+    /* extract the oldest immutable memtable -> sst */
+    struct memtable *old_mt = e->imm_memtables[0];
+    if (old_mt->size == 0)
+        return -1;
+
+    /* get sst file path */
+    char path[256];
+    snprintf(path, 256, "%s/%llu.sst", e->db_path, e->next_id);
+
+    /* write memtable to sst_builder */
+    struct sst_builder sb;
+    if (sst_builder_init(&sb, e->opts.block_size, path) < 0)
+        return -1;
+
+    struct mt_iter mi;
+    if (mt_iter_seek_first(&mi, old_mt) < 0) {
+        sst_builder_destroy(&sb);
+        return -1;
+    }
+
+    while (mt_iter_is_valid(&mi)) {
+        if (sst_builder_add(&sb, mt_iter_key(&mi), mt_iter_key_len(&mi),
+                            mt_iter_value(&mi), mt_iter_value_len(&mi)) < 0) {
+            sst_builder_destroy(&sb);
+            return -1;
+        }
+        mt_iter_next(&mi);
+    }
+
+    /* sst_builder -> sst */
+    if (e->sst_count >= e->sst_cap) {
+        uint32_t new_cap = e->sst_cap * 2;
+        struct sst *tmp = realloc(e->ssts, new_cap * sizeof(struct sst));
+        if (!tmp) {
+            sst_builder_destroy(&sb);
+            return -1;
+        }
+        e->ssts = tmp;
+        e->sst_cap = new_cap;
+    }
+    if (sst_builder_build(&sb, path, e->next_id, &e->ssts[e->sst_count]) < 0) {
+        sst_builder_destroy(&sb);
+        return -1;
+    }
+
+    e->sst_count++;
+    e->next_id++;
+
+    /* remove from imm_memtable */
+    for (uint32_t i = 1; i < e->imm_count; i++)
+        e->imm_memtables[i - 1] = e->imm_memtables[i];
+    e->imm_count--;
+
+    memtable_destroy(old_mt);
+    free(old_mt);
+
     return 0;
 }

@@ -29,6 +29,7 @@ engine
 - **SST iterator** — seek-based iteration over an entire SST with automatic cross-block loading
 - **Unified iterator interface** — generic cursor with function pointers, allowing type-erased iteration over any source
 - **Merge iterator** — k-way merge over mixed memtable and SST iterators with dedup by source priority
+- **L0 flush** — writes frozen immutable memtables to SST files on disk
 
 ## Building
 
@@ -56,8 +57,9 @@ struct engine_options opts = {
     .threshold = 64 * 1024 * 1024, /* 64 MB */
     .imm_cap = 4,
     .max_level = 16,
+    .block_size = 4096,
 };
-engine_open(&e, &opts);
+engine_open(&e, &opts, "/tmp/mydb");
 
 engine_put(&e, (uint8_t *) "hello", 5, (uint8_t *) "world", 5);
 
@@ -88,6 +90,7 @@ engine_close(&e);
 - [x] SSTable (flush to disk)
 - [x] SSTable iterator
 - [x] Merge iterator (k-way merge over memtables and SSTs)
+- [x] L0 flush (memtable → SST)
 - [ ] Bloom filter (skip SSTables that cannot contain a key)
 - [ ] Compaction
 - [ ] WAL (crash recovery)

@@ -9,16 +9,19 @@ struct memtable;
 /**
  * struct engine_options - configuration passed to engine_open
  *
- * @threshold:  soft size limit in bytes; when a memtable's approx_size
- *              exceeds this, it is frozen and a new one is created
- * @imm_cap:    maximum number of immutable memtables; when full,
- *              the oldest one is flushed to disk before freezing
- * @max_level:  maximum skiplist level for all memtables
+ * @threshold:   soft size limit in bytes; when a memtable's approx_size
+ *               exceeds this, it is frozen and a new one is created
+ * @imm_cap:     maximum number of immutable memtables; when full,
+ *               the oldest one is flushed to disk before freezing
+ * @max_level:   maximum skiplist level for all memtables
+ * @block_size:  target block size in bytes for SST files; defaults to
+ *               BLOCK_SIZE (4096) if set to 0
  */
 struct engine_options {
     size_t threshold;
     uint32_t imm_cap;
     uint32_t max_level;
+    size_t block_size;
 };
 
 /**
@@ -28,27 +31,45 @@ struct engine_options {
  * @imm_memtables: array of frozen immutable memtables, ordered oldest first;
  *                 imm_memtables[imm_count-1] is the most recently frozen
  * @imm_count:     number of immutable memtables currently held
- * @next_id:       monotonically increasing id assigned to each new memtable
+ * @ssts:          array of L0 SSTs, ordered newest first
+ * @sst_count:     number of SSTs currently held
+ * @sst_cap:       allocated capacity of the ssts array
+ * @next_id:       monotonically increasing id assigned to each new
+ *                 memtable and SST
+ * @db_path:       directory path for SST files on disk
  * @opts:          engine configuration
  */
 struct engine {
+    /* memtable */
     struct memtable *memtable;
     struct memtable **imm_memtables;
     uint32_t imm_count;
+
+    /* sstable */
+    struct sst *ssts;
+    uint32_t sst_count;
+    uint32_t sst_cap;
+
     uint64_t next_id;
+    char *db_path;
     struct engine_options opts;
 };
 
 /**
  * engine_open - initialize and open the engine
  *
- * Allocates the first mutable memtable with id 0.
+ * Creates the database directory if it does not exist, allocates
+ * the first mutable memtable with id 0, and initializes the L0
+ * SST array.
  *
- * @e:    pointer to an uninitialized engine struct
- * @opts: configuration options
- * @return: 0 on success, -1 on allocation failure
+ * @param e:    pointer to an uninitialized engine struct
+ * @param opts: configuration options
+ * @param path: directory path for SST files on disk
+ * @return:     0 on success, -1 on allocation failure
  */
-int engine_open(struct engine *e, struct engine_options *opts);
+int engine_open(struct engine *e,
+                struct engine_options *opts,
+                const char *path);
 
 /**
  * engine_close - destroy the engine and free all resources
@@ -141,3 +162,15 @@ int engine_scan(struct engine *e,
  * @return: 0 on success, -1 on allocation failure or imm array full
  */
 int engine_freeze_memtable(struct engine *e);
+
+/**
+ * engine_flush - flush the oldest immutable memtable to an L0 SST
+ *
+ * Takes the oldest immutable memtable (imm_memtables[0]), writes
+ * all its entries to a new SST file on disk, adds the SST to the
+ * L0 array, and removes the memtable from the immutable list.
+ *
+ * @e:       target engine
+ * @return:  0 on success, -1 on failure or no immutable memtable to flush
+ */
+int engine_flush(struct engine *e);
