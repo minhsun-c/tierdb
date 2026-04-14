@@ -127,6 +127,20 @@ int engine_get(struct engine *e,
     /* search in sstable */
     struct sst_iter si;
     for (int i = (int) e->sst_count - 1; i >= 0; i--) {
+        struct sst *s = &e->ssts[i];
+        uint8_t *fk = s->metas[0].first_key;
+        uint16_t fk_len = s->metas[0].first_key_len;
+        uint8_t *lk = s->metas[s->n_blocks - 1].last_key;
+        uint16_t lk_len = s->metas[s->n_blocks - 1].last_key_len;
+
+        /* skip impossible case: target key < first_key */
+        if (key_cmp(key, key_len, fk, fk_len) < 0)
+            continue;
+
+        /* skip impossible case: last_key < target key */
+        if (key_cmp(lk, lk_len, key, key_len) < 0)
+            continue;
+
         if (sst_iter_seek_key(&si, &e->ssts[i], key, key_len) < 0)
             continue;
         if (!sst_iter_is_valid(&si)) {
@@ -211,17 +225,34 @@ int engine_scan(struct engine *e,
     }
 
     /* sstables */
+    uint32_t n_poss_iter = 0;
     for (uint32_t i = 0; i < e->sst_count; i++) {
         struct sst *sst = &e->ssts[e->sst_count - 1 - i];
+        /* skip impossible case: [first_key, last_key] [lower, upper] */
+        if (lower && key_cmp(sst->metas[sst->n_blocks - 1].last_key,
+                             sst->metas[sst->n_blocks - 1].last_key_len, lower,
+                             lower_len) < 0)
+            continue;
+
+        /* skip impossible case: [lower, upper] [first_key, last_key] */
+        if (upper && key_cmp(upper, upper_len, sst->metas[0].first_key,
+                             sst->metas[0].first_key_len) < 0)
+            continue;
+
         if (lower)
-            sst_iter_seek_key(&sis[i], sst, lower, (uint16_t) lower_len);
+            sst_iter_seek_key(&sis[n_poss_iter], sst, lower,
+                              (uint16_t) lower_len);
         else
-            sst_iter_seek_first(&sis[i], sst);
-        sst_iter_to_iter(&sis[i], &iters[i + 1 + e->imm_count]);
+            sst_iter_seek_first(&sis[n_poss_iter], sst);
+        sst_iter_to_iter(&sis[n_poss_iter],
+                         &iters[n_poss_iter + 1 + e->imm_count]);
+        n_poss_iter++;
     }
 
     /* init the fields in lsm_iter */
-    if (lsm_iter_init(iter, iters, count, upper, (uint16_t) upper_len) < 0) {
+    uint32_t n_total_iter = 1 + e->imm_count + n_poss_iter;
+    if (lsm_iter_init(iter, iters, n_total_iter, upper, (uint16_t) upper_len) <
+        0) {
         free(buf);
         return -1;
     }
@@ -229,7 +260,7 @@ int engine_scan(struct engine *e,
     /* store the buffer into lsm_iter */
     iter->iter_buffer = buf;
     iter->sis = sis;
-    iter->sst_count = e->sst_count;
+    iter->sst_count = n_poss_iter;
 
     return 0;
 }
